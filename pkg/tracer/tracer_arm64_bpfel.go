@@ -8,9 +8,52 @@ import (
 	_ "embed"
 	"fmt"
 	"io"
+	"structs"
 
 	"github.com/cilium/ebpf"
 )
+
+type tracerConfig struct {
+	_         structs.HostLayout
+	TargetPid int32
+}
+
+type tracerEvent struct {
+	_               structs.HostLayout
+	Type            tracerEventType
+	_               [7]byte
+	Ts              uint64
+	ProcessIdentity struct {
+		_         structs.HostLayout
+		Pid       uint32
+		_         [4]byte
+		StartTime uint64
+		Comm      [16]uint8
+	}
+	CgroupId uint64
+}
+
+type tracerEventType uint8
+
+const (
+	tracerEventTypeUNKNOWN        tracerEventType = 0
+	tracerEventTypeFORK           tracerEventType = 1
+	tracerEventTypeEXEC           tracerEventType = 2
+	tracerEventTypeEXIT           tracerEventType = 3
+	tracerEventTypeMAX_EVENT_TYPE tracerEventType = 4
+)
+
+type tracerForkEvent struct {
+	_      structs.HostLayout
+	Event  tracerEvent
+	Parent struct {
+		_         structs.HostLayout
+		Pid       uint32
+		_         [4]byte
+		StartTime uint64
+		Comm      [16]uint8
+	}
+}
 
 // loadTracer returns the embedded CollectionSpec for tracer.
 func loadTracer() (*ebpf.CollectionSpec, error) {
@@ -54,13 +97,17 @@ type tracerSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type tracerProgramSpecs struct {
-	Trigger *ebpf.ProgramSpec `ebpf:"trigger"`
+	SchedProcessExec *ebpf.ProgramSpec `ebpf:"sched_process_exec"`
+	SchedProcessExit *ebpf.ProgramSpec `ebpf:"sched_process_exit"`
+	SchedProcessFork *ebpf.ProgramSpec `ebpf:"sched_process_fork"`
+	Trigger          *ebpf.ProgramSpec `ebpf:"trigger"`
 }
 
 // tracerMapSpecs contains maps before they are loaded into the kernel.
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type tracerMapSpecs struct {
+	Events      *ebpf.MapSpec `ebpf:"events"`
 	TailCallMap *ebpf.MapSpec `ebpf:"tail_call_map"`
 }
 
@@ -68,9 +115,9 @@ type tracerMapSpecs struct {
 //
 // It can be passed ebpf.CollectionSpec.Assign.
 type tracerVariableSpecs struct {
-	TRACE_EVENT_FL_TRACEPOINT     *ebpf.VariableSpec `ebpf:"TRACE_EVENT_FL_TRACEPOINT"`
-	TRACE_EVENT_FL_TRACEPOINT_BIT *ebpf.VariableSpec `ebpf:"TRACE_EVENT_FL_TRACEPOINT_BIT"`
-	TargetPid                     *ebpf.VariableSpec `ebpf:"target_pid"`
+	Conf            *ebpf.VariableSpec `ebpf:"conf"`
+	UnusedEvent     *ebpf.VariableSpec `ebpf:"unused_event"`
+	UnusedForkEvent *ebpf.VariableSpec `ebpf:"unused_fork_event"`
 }
 
 // tracerObjects contains all objects after they have been loaded into the kernel.
@@ -93,11 +140,13 @@ func (o *tracerObjects) Close() error {
 //
 // It can be passed to loadTracerObjects or ebpf.CollectionSpec.LoadAndAssign.
 type tracerMaps struct {
+	Events      *ebpf.Map `ebpf:"events"`
 	TailCallMap *ebpf.Map `ebpf:"tail_call_map"`
 }
 
 func (m *tracerMaps) Close() error {
 	return _TracerClose(
+		m.Events,
 		m.TailCallMap,
 	)
 }
@@ -106,20 +155,26 @@ func (m *tracerMaps) Close() error {
 //
 // It can be passed to loadTracerObjects or ebpf.CollectionSpec.LoadAndAssign.
 type tracerVariables struct {
-	TRACE_EVENT_FL_TRACEPOINT     *ebpf.Variable `ebpf:"TRACE_EVENT_FL_TRACEPOINT"`
-	TRACE_EVENT_FL_TRACEPOINT_BIT *ebpf.Variable `ebpf:"TRACE_EVENT_FL_TRACEPOINT_BIT"`
-	TargetPid                     *ebpf.Variable `ebpf:"target_pid"`
+	Conf            *ebpf.Variable `ebpf:"conf"`
+	UnusedEvent     *ebpf.Variable `ebpf:"unused_event"`
+	UnusedForkEvent *ebpf.Variable `ebpf:"unused_fork_event"`
 }
 
 // tracerPrograms contains all programs after they have been loaded into the kernel.
 //
 // It can be passed to loadTracerObjects or ebpf.CollectionSpec.LoadAndAssign.
 type tracerPrograms struct {
-	Trigger *ebpf.Program `ebpf:"trigger"`
+	SchedProcessExec *ebpf.Program `ebpf:"sched_process_exec"`
+	SchedProcessExit *ebpf.Program `ebpf:"sched_process_exit"`
+	SchedProcessFork *ebpf.Program `ebpf:"sched_process_fork"`
+	Trigger          *ebpf.Program `ebpf:"trigger"`
 }
 
 func (p *tracerPrograms) Close() error {
 	return _TracerClose(
+		p.SchedProcessExec,
+		p.SchedProcessExit,
+		p.SchedProcessFork,
 		p.Trigger,
 	)
 }

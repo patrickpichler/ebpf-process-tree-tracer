@@ -130,7 +130,8 @@ func main() {
 	}
 
 	fmt.Println("running...")
-	<-ctx.Done()
+	t.Run(ctx)
+
 	fmt.Println("done...")
 	s.GracefulStop()
 }
