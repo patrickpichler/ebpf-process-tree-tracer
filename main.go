@@ -20,6 +20,7 @@ import (
 	profiler "go.opentelemetry.io/ebpf-profiler/tracer"
 	profilertracertypes "go.opentelemetry.io/ebpf-profiler/tracer/types"
 	"google.golang.org/grpc"
+	"patrickpichler.dev/process-tree-tracer/pkg/processtree"
 	"patrickpichler.dev/process-tree-tracer/pkg/tracer"
 )
 
@@ -111,6 +112,7 @@ func main() {
 	t, err := tracer.New(log, tracer.TracerCfg{
 		TailCallTarget: prog,
 		TargetPID:      695582,
+		ProcessTree:    processtree.New(),
 	})
 	if err != nil {
 		log.Error("error creating tracer", slog.Any("error", err.Error()))

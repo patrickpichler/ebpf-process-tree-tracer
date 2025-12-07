@@ -12,8 +12,8 @@ struct config {
 
 struct process_identity {
   u32 pid;
+  u32 tid;
   u64 start_time;
-  u8 comm[TASK_COMM_LEN];
 };
 
 enum event_type {
@@ -28,9 +28,12 @@ COMPILER_VERIFY(sizeof(enum event_type) == 1);
 
 struct event {
   enum event_type type;
+  u8 comm[TASK_COMM_LEN];
   u64 ts;
   struct process_identity process_identity;
   u64 cgroup_id;
+  u32 ns_pid;
+  u32 ns_tid;
 };
 
 struct fork_event {

@@ -21,16 +21,18 @@ type tracerConfig struct {
 type tracerEvent struct {
 	_               structs.HostLayout
 	Type            tracerEventType
+	Comm            [16]uint8
 	_               [7]byte
 	Ts              uint64
 	ProcessIdentity struct {
 		_         structs.HostLayout
 		Pid       uint32
-		_         [4]byte
+		Tid       uint32
 		StartTime uint64
-		Comm      [16]uint8
 	}
 	CgroupId uint64
+	NsPid    uint32
+	NsTid    uint32
 }
 
 type tracerEventType uint8
@@ -49,9 +51,8 @@ type tracerForkEvent struct {
 	Parent struct {
 		_         structs.HostLayout
 		Pid       uint32
-		_         [4]byte
+		Tid       uint32
 		StartTime uint64
-		Comm      [16]uint8
 	}
 }
 

@@ -14,11 +14,13 @@ import (
 	"github.com/cilium/ebpf/ringbuf"
 	"github.com/cilium/ebpf/rlimit"
 	"golang.org/x/sys/unix"
+	"patrickpichler.dev/process-tree-tracer/pkg/processtree"
 )
 
 type TracerCfg struct {
 	TailCallTarget *ebpf.Program
 	TargetPID      int32
+	ProcessTree    *processtree.ProcessTree
 }
 
 type Tracer struct {
@@ -204,8 +206,23 @@ func (t *Tracer) Run(ctx context.Context) error {
 				slog.String("event_type", forkEvent.Event.Type.String()),
 				slog.Uint64("cgroup_id", forkEvent.Event.CgroupId),
 				slog.Int("pid", int(forkEvent.Event.ProcessIdentity.Pid)),
+				slog.Int("nspid", int(forkEvent.Event.NsPid)),
 				slog.Int("ppid", int(forkEvent.Parent.Pid)),
-				slog.String("comm", unix.ByteSliceToString(forkEvent.Event.ProcessIdentity.Comm[:])),
+				slog.String("comm", unix.ByteSliceToString(forkEvent.Event.Comm[:])),
+			)
+
+			t.cfg.ProcessTree.ProcessFork(processtree.ProcessIdentity{
+				Pid:       forkEvent.Event.ProcessIdentity.Pid,
+				StartTime: forkEvent.Event.ProcessIdentity.StartTime,
+			},
+				processtree.ProcessIdentity{
+					Pid:       forkEvent.Parent.Pid,
+					StartTime: forkEvent.Parent.StartTime,
+				},
+				processtree.ProcessInfo{
+					NsPid: forkEvent.Event.NsPid,
+					NsTid: forkEvent.Event.NsTid,
+				},
 			)
 			continue
 		case tracerEventTypeEXEC, tracerEventTypeEXIT:
@@ -223,8 +240,25 @@ func (t *Tracer) Run(ctx context.Context) error {
 				slog.String("event_type", event.Type.String()),
 				slog.Uint64("cgroup_id", event.CgroupId),
 				slog.Int("pid", int(event.ProcessIdentity.Pid)),
-				slog.String("comm", unix.ByteSliceToString(event.ProcessIdentity.Comm[:])),
+				slog.Int("nspid", int(event.NsPid)),
+				slog.String("comm", unix.ByteSliceToString(event.Comm[:])),
 			)
+
+			if eventType == tracerEventTypeEXEC {
+				t.cfg.ProcessTree.ProcessExec(processtree.ProcessIdentity{
+					Pid:       event.ProcessIdentity.Pid,
+					StartTime: event.ProcessIdentity.StartTime,
+				},
+					"",
+					"",
+				)
+			} else {
+				t.cfg.ProcessTree.ProcessExit(processtree.ProcessIdentity{
+					Pid:       event.ProcessIdentity.Pid,
+					StartTime: event.ProcessIdentity.StartTime,
+				},
+				)
+			}
 			continue
 		}
 

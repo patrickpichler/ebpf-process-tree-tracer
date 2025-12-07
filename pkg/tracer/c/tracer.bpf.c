@@ -24,11 +24,32 @@ int trigger(void *ctx) {
   return 0;
 }
 
-void fill_process_identity(struct process_identity *identity,
-                           struct task_struct *task) {
-  identity->pid = task->pid;
+pid_t __always_inline get_task_pid_vnr(struct task_struct *task) {
+  unsigned int level = 0;
+  struct pid *pid = NULL;
+
+  pid = BPF_CORE_READ(task, thread_pid); // NOLINT(bugprone-sizeof-expression)
+
+  level = BPF_CORE_READ(pid, level);
+
+  return BPF_CORE_READ(pid, numbers[level].nr);
+}
+
+pid_t __always_inline get_task_ns_pid(struct task_struct *task) {
+  return get_task_pid_vnr(task);
+}
+
+pid_t __always_inline get_task_ns_tgid(struct task_struct *task) {
+  struct task_struct *group_leader =
+      BPF_CORE_READ(task, group_leader); // NOLINT(bugprone-sizeof-expression)
+  return get_task_pid_vnr(group_leader);
+}
+
+void __always_inline fill_process_identity(struct process_identity *identity,
+                                           struct task_struct *task) {
+  identity->pid = task->tgid;
+  identity->tid = task->pid;
   identity->start_time = task->start_time;
-  BPF_PROBE_READ_STR_INTO(&identity->comm, task, comm);
 }
 
 u64 get_cgroup_id(struct task_struct *task) {
@@ -50,8 +71,12 @@ int BPF_PROG(sched_process_fork, struct task_struct *parent,
   event->type = FORK;
   event->ts = bpf_ktime_get_ns();
   event->cgroup_id = get_cgroup_id(child);
+  event->ns_pid = get_task_ns_tgid(child);
+  event->ns_tid = get_task_ns_pid(child);
   fill_process_identity(&event->process_identity, child);
   fill_process_identity(&fork_event->parent, parent);
+
+  BPF_PROBE_READ_STR_INTO(&event->comm, child, comm);
 
   bpf_ringbuf_submit(event, 0);
 
@@ -75,7 +100,9 @@ int BPF_PROG(sched_process_exec, struct task_struct *parent, pid_t pid,
   event->cgroup_id = get_cgroup_id(parent);
   event->process_identity.pid = pid;
   event->process_identity.start_time = parent->start_time;
-  BPF_PROBE_READ_STR_INTO(&event->process_identity.comm, parent, comm);
+  event->ns_pid = get_task_ns_tgid(parent);
+  event->ns_tid = get_task_ns_pid(parent);
+  BPF_PROBE_READ_STR_INTO(&event->comm, parent, comm);
 
   bpf_ringbuf_submit(event, 0);
 
@@ -96,7 +123,10 @@ int BPF_PROG(sched_process_exit, struct task_struct *task) {
   event->type = EXIT;
   event->ts = bpf_ktime_get_ns();
   event->cgroup_id = get_cgroup_id(task);
+  event->ns_pid = get_task_ns_tgid(task);
+  event->ns_tid = get_task_ns_pid(task);
   fill_process_identity(&event->process_identity, task);
+  BPF_PROBE_READ_STR_INTO(&event->comm, task, comm);
 
   bpf_ringbuf_submit(event, 0);
 
