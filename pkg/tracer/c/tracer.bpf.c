@@ -137,4 +137,50 @@ err:
   return 0;
 }
 
+SEC("iter/task")
+int task_iter(struct bpf_iter__task *ctx) {
+  // Simulate a fork and exec event to keep the userspace the same.
+  // TODO(patrick.pichler): optimize this in the future.
+  struct task_struct *task = ctx->task;
+  if (!task) {
+    return 0;
+  }
+
+  struct fork_event *fork_event =
+      bpf_ringbuf_reserve(&events, sizeof(struct fork_event), 0);
+  if (!fork_event) {
+    return 0;
+  }
+
+  struct event *event = &fork_event->event;
+
+  event->type = FORK;
+  event->ts = bpf_ktime_get_ns();
+  event->cgroup_id = get_cgroup_id(task);
+  event->ns_pid = get_task_ns_tgid(task);
+  event->ns_tid = get_task_ns_pid(task);
+  fill_process_identity(&event->process_identity, task);
+  fill_process_identity(&fork_event->parent, task->parent);
+
+  BPF_PROBE_READ_STR_INTO(&event->comm, task, comm);
+
+  bpf_ringbuf_submit(event, 0);
+
+  event = bpf_ringbuf_reserve(&events, sizeof(struct event), 0);
+  if (!event) {
+    return 0;
+  }
+
+  event->type = EXEC;
+  event->ts = bpf_ktime_get_ns();
+  event->cgroup_id = get_cgroup_id(task);
+  fill_process_identity(&event->process_identity, task);
+  event->ns_pid = get_task_ns_tgid(task);
+  event->ns_tid = get_task_ns_pid(task);
+  BPF_PROBE_READ_STR_INTO(&event->comm, task, comm);
+
+  bpf_ringbuf_submit(event, 0);
+  return 0;
+}
+
 char LICENSE[] SEC("license") = "Dual BSD/GPL";

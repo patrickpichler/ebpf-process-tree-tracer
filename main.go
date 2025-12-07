@@ -19,6 +19,7 @@ import (
 	"go.opentelemetry.io/ebpf-profiler/tracehandler"
 	profiler "go.opentelemetry.io/ebpf-profiler/tracer"
 	profilertracertypes "go.opentelemetry.io/ebpf-profiler/tracer/types"
+	"golang.org/x/sync/errgroup"
 	"google.golang.org/grpc"
 	"patrickpichler.dev/process-tree-tracer/pkg/processtree"
 	"patrickpichler.dev/process-tree-tracer/pkg/tracer"
@@ -131,10 +132,22 @@ func main() {
 		os.Exit(1)
 	}
 
-	fmt.Println("running...")
-	t.Run(ctx)
+	errg, ctx := errgroup.WithContext(ctx)
 
-	fmt.Println("done...")
+	fmt.Println("running...")
+	errg.Go(func() error {
+		return t.Run(ctx)
+	})
+
+	errg.Go(func() error {
+		return t.LoadProcessTree(ctx)
+	})
+
+	if err := errg.Wait(); err != nil {
+		log.Error("unexpected error", slog.Any("error", err))
+	}
+
+	fmt.Println("stopping..")
 	s.GracefulStop()
 }
 

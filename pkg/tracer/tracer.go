@@ -154,6 +154,26 @@ func (t *Tracer) extractEventType(data []byte) (tracerEventType, error) {
 	return tracerEventType(data[0]), nil
 }
 
+func (t *Tracer) LoadProcessTree(ctx context.Context) error {
+	if !t.loaded.Load() {
+		return ErrNotLoaded
+	}
+
+	tasksIter, err := link.AttachIter(link.IterOptions{
+		Program: t.objs.TaskIter,
+	})
+	if err != nil {
+		return fmt.Errorf("error while attaching process tree iter: %w", err)
+	}
+
+	// We don't care about the output.
+	if _, err := readIterator(tasksIter); err != nil {
+		return fmt.Errorf("error while reading from process tree iter: %w", err)
+	}
+
+	return nil
+}
+
 func (t *Tracer) Run(ctx context.Context) error {
 	if !t.loaded.Load() {
 		return ErrNotLoaded

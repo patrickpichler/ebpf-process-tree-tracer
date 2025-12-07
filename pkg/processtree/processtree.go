@@ -1,8 +1,6 @@
 package processtree
 
 import (
-	"errors"
-	"fmt"
 	"strconv"
 )
 
@@ -38,10 +36,6 @@ func (s ProcessState) String() string {
 	return "unknown"
 }
 
-var (
-	ErrProcessNotFound = errors.New("process not found")
-)
-
 type Process struct {
 	Identity ProcessIdentity
 	State    ProcessState
@@ -72,8 +66,11 @@ func (t *ProcessTree) ProcessFork(
 	parent ProcessIdentity,
 	info ProcessInfo,
 ) error {
-	if _, found := t.processes[parent]; !found {
-		return fmt.Errorf("error tracking process fork %s: %w", identity.String(), ErrProcessNotFound)
+	if p, found := t.processes[identity]; found {
+		p.Parent = parent
+		p.Info = info
+
+		return nil
 	}
 
 	t.processes[identity] = &Process{
@@ -92,12 +89,11 @@ func (t *ProcessTree) ProcessExec(
 	args string,
 ) error {
 	if proc, found := t.processes[identity]; found {
-		proc.State = ProcessStateAlive
 		proc.Info.Binary = binary
 		proc.Info.Args = args
 	}
 
-	return fmt.Errorf("error tracking process exec %s: %w", identity.String(), ErrProcessNotFound)
+	return nil
 }
 
 func (t *ProcessTree) ProcessExit(identity ProcessIdentity) error {
@@ -105,5 +101,5 @@ func (t *ProcessTree) ProcessExit(identity ProcessIdentity) error {
 		proc.State = ProcessStateExited
 		return nil
 	}
-	return fmt.Errorf("error tracking process exit %s: %w", identity.String(), ErrProcessNotFound)
+	return nil
 }

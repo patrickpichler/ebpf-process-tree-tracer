@@ -101,6 +101,7 @@ type tracerProgramSpecs struct {
 	SchedProcessExec *ebpf.ProgramSpec `ebpf:"sched_process_exec"`
 	SchedProcessExit *ebpf.ProgramSpec `ebpf:"sched_process_exit"`
 	SchedProcessFork *ebpf.ProgramSpec `ebpf:"sched_process_fork"`
+	TaskIter         *ebpf.ProgramSpec `ebpf:"task_iter"`
 	Trigger          *ebpf.ProgramSpec `ebpf:"trigger"`
 }
 
@@ -168,6 +169,7 @@ type tracerPrograms struct {
 	SchedProcessExec *ebpf.Program `ebpf:"sched_process_exec"`
 	SchedProcessExit *ebpf.Program `ebpf:"sched_process_exit"`
 	SchedProcessFork *ebpf.Program `ebpf:"sched_process_fork"`
+	TaskIter         *ebpf.Program `ebpf:"task_iter"`
 	Trigger          *ebpf.Program `ebpf:"trigger"`
 }
 
@@ -176,6 +178,7 @@ func (p *tracerPrograms) Close() error {
 		p.SchedProcessExec,
 		p.SchedProcessExit,
 		p.SchedProcessFork,
+		p.TaskIter,
 		p.Trigger,
 	)
 }
