@@ -14,9 +14,9 @@ import (
 	"github.com/cilium/ebpf"
 	"go.opentelemetry.io/collector/pdata/pprofile/pprofileotlp"
 	"go.opentelemetry.io/ebpf-profiler/host"
+	profilerlog "go.opentelemetry.io/ebpf-profiler/log"
 	"go.opentelemetry.io/ebpf-profiler/reporter"
 	"go.opentelemetry.io/ebpf-profiler/times"
-	"go.opentelemetry.io/ebpf-profiler/tracehandler"
 	profiler "go.opentelemetry.io/ebpf-profiler/tracer"
 	profilertracertypes "go.opentelemetry.io/ebpf-profiler/tracer/types"
 	"golang.org/x/sync/errgroup"
@@ -73,7 +73,8 @@ func main() {
 
 	intervals := times.New(5*time.Second, 5*time.Second, 5*time.Second)
 
-	// logrus.SetLevel(logrus.ErrorLevel)
+	profilerlog.SetLevel(slog.LevelError)
+
 	rep, err := reporter.NewOTLP(&reporter.Config{
 		CollAgentAddr:          lis.Addr().String(),
 		Name:                   "dummy",
@@ -169,6 +170,7 @@ func startProfiler(ctx context.Context, rep reporter.Reporter, intervals *times.
 		ProbabilisticThreshold: 0,
 		OffCPUThreshold:        0,
 		LoadProbe:              true,
+		TraceReporter:          rep,
 	})
 	if err != nil {
 		return fmt.Errorf("error loading profiler: %w", err)
@@ -185,15 +187,8 @@ func startProfiler(ctx context.Context, rep reporter.Reporter, intervals *times.
 		return fmt.Errorf("failed to start map monitors: %v", err)
 	}
 
-	// TODO(patrick.pichler): random guess
-	cacheSize := 100
-
 	if err := rep.Start(ctx); err != nil {
 		return fmt.Errorf("error starting reporter: %w", err)
-	}
-
-	if _, err := tracehandler.Start(ctx, rep, trc.TraceProcessor(), traceCh, intervals, uint32(cacheSize)); err != nil {
-		return fmt.Errorf("error starting tracehandler: %w", err)
 	}
 
 	return nil
@@ -227,7 +222,7 @@ func pollFindProfilerLinks(ctx context.Context, timeout time.Duration) (*ebpf.Pr
 }
 
 func findProfilerLinks(ctx context.Context) (*ebpf.Program, error) {
-	prog, err := findProgram(ctx, "uprobe__generic", ebpf.Kprobe)
+	prog, err := findProgram(ctx, "kprobe__generic", ebpf.Kprobe)
 	if err != nil {
 		return nil, err
 	}
