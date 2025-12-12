@@ -51,7 +51,7 @@ pid_t __always_inline get_task_ns_tgid(struct task_struct *task) {
 
 void __always_inline fill_process_identity(struct process_identity *identity,
                                            struct task_struct *task) {
-  identity->pid = task->tgid;
+  identity->pid = task->pid;
   identity->tid = task->pid;
   identity->start_time = task->start_time;
 }

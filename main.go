@@ -2,12 +2,15 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"syscall"
 	"time"
 
@@ -49,6 +52,127 @@ func (f *profilesServer) Export(ctx context.Context, request pprofileotlp.Export
 	fmt.Println("====> written something to", targetFile)
 
 	return pprofileotlp.NewExportResponse(), nil
+}
+
+type TreeNode struct {
+	Process  processtree.Process `json:"process"`
+	Children []*TreeNode         `json:"children"`
+}
+
+func buildProcessTree(processes []processtree.Process) []*TreeNode {
+	nodes := map[processtree.ProcessIdentity]*TreeNode{}
+
+	for _, p := range processes {
+		nodes[p.Identity] = &TreeNode{
+			Process:  p,
+			Children: []*TreeNode{},
+		}
+	}
+
+	rootNodes := []*TreeNode{}
+
+	for _, p := range nodes {
+		parent, found := nodes[p.Process.Parent]
+		if !found {
+			rootNodes = append(rootNodes, p)
+			continue
+		}
+
+		parent.Children = append(parent.Children, p)
+	}
+
+	return rootNodes
+}
+
+func buildProcessTreeHttpServer(log *slog.Logger, processTree *processtree.ProcessTree) *http.Server {
+	httpMux := http.NewServeMux()
+	httpMux.HandleFunc("/cgroup/{cgroupID}", func(w http.ResponseWriter, r *http.Request) {
+		cgroupIDStr := r.PathValue("cgroupID")
+		cgroupID, err := strconv.ParseUint(cgroupIDStr, 10, 64)
+		if err != nil {
+			bytes, err := json.Marshal(map[string]string{"error": "invalid cgroupID", "value": cgroupIDStr})
+			if err != nil {
+				log.Error("error marshalling json response", slog.Any("error", err))
+				w.WriteHeader(501)
+				return
+			}
+
+			w.WriteHeader(401)
+			w.Write(bytes)
+			return
+		}
+
+		processes := processTree.FindProcessesForCgroup(cgroupID)
+		bytes, err := json.Marshal(processes)
+		if err != nil {
+			log.Error("error marshalling json response", slog.Any("error", err))
+			w.WriteHeader(501)
+			return
+		}
+
+		w.Write(bytes)
+	})
+
+	httpMux.HandleFunc("/cgroup/{cgroupID}/tree", func(w http.ResponseWriter, r *http.Request) {
+		cgroupIDStr := r.PathValue("cgroupID")
+		cgroupID, err := strconv.ParseUint(cgroupIDStr, 10, 64)
+		if err != nil {
+			bytes, err := json.Marshal(map[string]string{"error": "invalid cgroupID", "value": cgroupIDStr})
+			if err != nil {
+				log.Error("error marshalling json response", slog.Any("error", err))
+				w.WriteHeader(501)
+				return
+			}
+
+			w.WriteHeader(401)
+			w.Write(bytes)
+			return
+		}
+
+		processes := processTree.FindProcessesForCgroup(cgroupID)
+		rootNodes := buildProcessTree(processes)
+
+		bytes, err := json.Marshal(rootNodes)
+		if err != nil {
+			log.Error("error marshalling json response", slog.Any("error", err))
+			w.WriteHeader(501)
+			return
+		}
+
+		w.Write(bytes)
+	})
+
+	httpMux.HandleFunc("/process/{pid}", func(w http.ResponseWriter, r *http.Request) {
+		pidStr := r.PathValue("pid")
+		pid, err := strconv.ParseUint(pidStr, 10, 32)
+		if err != nil {
+			bytes, err := json.Marshal(map[string]string{"error": "invalid pid", "value": pidStr})
+			if err != nil {
+				log.Error("error marshalling json response", slog.Any("error", err))
+				w.WriteHeader(501)
+				return
+			}
+
+			w.WriteHeader(401)
+			w.Write(bytes)
+			return
+		}
+
+		processes := processTree.FindProcessesForPid(uint32(pid))
+		bytes, err := json.Marshal(processes)
+		if err != nil {
+			log.Error("error marshalling json response", slog.Any("error", err))
+			w.WriteHeader(501)
+			return
+		}
+
+		w.Write(bytes)
+	})
+
+	return &http.Server{
+		Addr:    "localhost:8080",
+		Handler: httpMux,
+	}
 }
 
 func main() {
@@ -131,12 +255,19 @@ func run(ctx context.Context, log *slog.Logger, targetPID int32, targetPIDNSInum
 		return fmt.Errorf("error finding profiler links: %w", err)
 	}
 
+	processTree := processtree.New()
+	httpServer := buildProcessTreeHttpServer(log, processTree)
+
+	errg.Go(func() error {
+		return httpServer.ListenAndServe()
+	})
+
 	log.Info("loading tracer...")
 	t, err := tracer.New(log, tracer.TracerCfg{
 		TailCallTarget:  prog,
 		TargetPID:       targetPID,
 		TargetPIDNSInum: targetPIDNSInum,
-		ProcessTree:     processtree.New(),
+		ProcessTree:     processTree,
 	})
 	if err != nil {
 		return fmt.Errorf("error creating tracer: %w", err)
@@ -168,6 +299,8 @@ func run(ctx context.Context, log *slog.Logger, targetPID int32, targetPIDNSInum
 
 	log.Info("stopping..")
 	s.GracefulStop()
+	// TODO(patrick.pichler): this context should probably be with timeout.
+	httpServer.Shutdown(context.TODO())
 
 	return nil
 }

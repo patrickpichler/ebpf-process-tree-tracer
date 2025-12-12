@@ -242,8 +242,10 @@ func (t *Tracer) Run(ctx context.Context) error {
 					StartTime: forkEvent.Parent.StartTime,
 				},
 				processtree.ProcessInfo{
-					NsPid: forkEvent.Event.NsPid,
-					NsTid: forkEvent.Event.NsTid,
+					NsPid:    forkEvent.Event.NsPid,
+					NsTid:    forkEvent.Event.NsTid,
+					CgroupID: forkEvent.Event.CgroupId,
+					Comm:     unix.ByteSliceToString(forkEvent.Event.Comm[:]),
 				},
 			)
 			continue
@@ -271,6 +273,7 @@ func (t *Tracer) Run(ctx context.Context) error {
 					Pid:       event.ProcessIdentity.Pid,
 					StartTime: event.ProcessIdentity.StartTime,
 				},
+					unix.ByteSliceToString(event.Comm[:]),
 					"",
 					"",
 				)
