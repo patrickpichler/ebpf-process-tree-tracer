@@ -14,8 +14,9 @@ import (
 )
 
 type tracerConfig struct {
-	_         structs.HostLayout
-	TargetPid int32
+	_           structs.HostLayout
+	TargetPid   int32
+	TargetPidns uint32
 }
 
 type tracerEvent struct {

@@ -18,9 +18,10 @@ import (
 )
 
 type TracerCfg struct {
-	TailCallTarget *ebpf.Program
-	TargetPID      int32
-	ProcessTree    *processtree.ProcessTree
+	TailCallTarget  *ebpf.Program
+	TargetPID       int32
+	TargetPIDNSInum uint32
+	ProcessTree     *processtree.ProcessTree
 }
 
 type Tracer struct {
@@ -52,7 +53,8 @@ func (t *Tracer) load() error {
 	objs := tracerObjects{}
 
 	config := tracerConfig{
-		TargetPid: t.cfg.TargetPID,
+		TargetPid:   t.cfg.TargetPID,
+		TargetPidns: t.cfg.TargetPIDNSInum,
 	}
 
 	if err := spec.Variables["conf"].Set(config); err != nil {

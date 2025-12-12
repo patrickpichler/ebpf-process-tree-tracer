@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/cilium/ebpf"
+	"github.com/spf13/cobra"
 	"go.opentelemetry.io/collector/pdata/pprofile/pprofileotlp"
 	"go.opentelemetry.io/ebpf-profiler/host"
 	profilerlog "go.opentelemetry.io/ebpf-profiler/log"
@@ -51,25 +52,49 @@ func (f *profilesServer) Export(ctx context.Context, request pprofileotlp.Export
 }
 
 func main() {
-	log := slog.Default()
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM)
-	defer cancel()
+	var (
+		targetPID       int32
+		targetPIDNSInum uint32
+	)
 
+	cmd := cobra.Command{
+		Use: "process-tree-tracer",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			log := slog.Default()
+			ctx, cancel := signal.NotifyContext(cmd.Context(), syscall.SIGTERM)
+			defer cancel()
+
+			return run(ctx, log, targetPID, targetPIDNSInum)
+		},
+	}
+
+	cmd.Flags().Int32Var(&targetPID, "target-pid", 0, "")
+	cmd.Flags().Uint32Var(&targetPIDNSInum, "target-pidns", 0, "")
+
+	if err := cmd.Execute(); err != nil {
+		fmt.Println(err)
+		cmd.Help()
+		os.Exit(1)
+	}
+}
+
+func run(ctx context.Context, log *slog.Logger, targetPID int32, targetPIDNSInum uint32) error {
 	var opts []grpc.ServerOption
 	s := grpc.NewServer(opts...)
 	pprofileotlp.RegisterGRPCServer(s, newProfilesServer())
 
+	errg, ctx := errgroup.WithContext(ctx)
+
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		log.Error("error creating listener", slog.Any("error", err.Error()))
-		os.Exit(1)
+		return fmt.Errorf("error creating GRPC listener: %w", err)
 	}
 
-	go func() {
-		err = s.Serve(lis)
-	}()
+	errg.Go(func() error {
+		return s.Serve(lis)
+	})
 
-	fmt.Println("GRPC server started at ", lis.Addr().String())
+	log.Info("GRPC server started ", slog.String("addr", lis.Addr().String()))
 
 	intervals := times.New(5*time.Second, 5*time.Second, 5*time.Second)
 
@@ -89,53 +114,46 @@ func main() {
 		ReportInterval:         intervals.ReportInterval(),
 	})
 	if err != nil {
-		log.Error("error creating otlp reporter", slog.Any("error", err.Error()))
-		os.Exit(1)
+		return fmt.Errorf("error creating otlp reporter: %w", err)
 	}
 
 	if err := rep.Start(ctx); err != nil {
-		log.Error("error starting otlp exporter", slog.Any("error", err.Error()))
-		os.Exit(1)
+		return fmt.Errorf("error starting otlp exporter: %w", err)
 	}
 
 	if err := startProfiler(ctx, rep, intervals); err != nil {
-		log.Error("error starting profiler", slog.Any("error", err.Error()))
-		os.Exit(1)
+		return fmt.Errorf("error starting profiler: %w", err)
 	}
 
-	fmt.Println("polling profiler links...")
+	log.Info("polling profiler links...")
 	prog, err := pollFindProfilerLinks(ctx, 5*time.Second)
 	if err != nil {
-		log.Error("error finding profiler links", slog.Any("error", err.Error()))
-		os.Exit(1)
+		return fmt.Errorf("error finding profiler links: %w", err)
 	}
 
-	fmt.Println("loading tracer...")
+	log.Info("loading tracer...")
 	t, err := tracer.New(log, tracer.TracerCfg{
-		TailCallTarget: prog,
-		TargetPID:      695582,
-		ProcessTree:    processtree.New(),
+		TailCallTarget:  prog,
+		TargetPID:       targetPID,
+		TargetPIDNSInum: targetPIDNSInum,
+		ProcessTree:     processtree.New(),
 	})
 	if err != nil {
-		log.Error("error creating tracer", slog.Any("error", err.Error()))
-		os.Exit(1)
+		return fmt.Errorf("error creating tracer: %w", err)
 	}
-	fmt.Println("tracer loaded...")
+
+	log.Info("tracer loaded...")
 
 	if err := t.Init(); err != nil {
-		log.Error("error initializing the tracer", slog.Any("error", err.Error()))
-		os.Exit(1)
+		return fmt.Errorf("error initializing the tracer: %w", err)
 	}
 	defer t.Close()
 
 	if err := t.Attach(); err != nil {
-		log.Error("error attaching tracer", slog.Any("error", err.Error()))
-		os.Exit(1)
+		return fmt.Errorf("error attaching tracer: %w", err)
 	}
 
-	errg, ctx := errgroup.WithContext(ctx)
-
-	fmt.Println("running...")
+	log.Info("running...")
 	errg.Go(func() error {
 		return t.Run(ctx)
 	})
@@ -145,11 +163,13 @@ func main() {
 	})
 
 	if err := errg.Wait(); err != nil {
-		log.Error("unexpected error", slog.Any("error", err))
+		return fmt.Errorf("unexpected error: %w", err)
 	}
 
-	fmt.Println("stopping..")
+	log.Info("stopping..")
 	s.GracefulStop()
+
+	return nil
 }
 
 func startProfiler(ctx context.Context, rep reporter.Reporter, intervals *times.Times) error {

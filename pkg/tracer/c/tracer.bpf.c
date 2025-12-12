@@ -24,6 +24,10 @@ int trigger(void *ctx) {
   return 0;
 }
 
+u32 __always_inline get_pidns_inum(struct task_struct *task) {
+  return BPF_CORE_READ(task, nsproxy, pid_ns_for_children, ns.inum);
+}
+
 pid_t __always_inline get_task_pid_vnr(struct task_struct *task) {
   unsigned int level = 0;
   struct pid *pid = NULL;
@@ -60,6 +64,11 @@ SEC("tp_btf/sched_process_fork")
 int BPF_PROG(sched_process_fork, struct task_struct *parent,
              struct task_struct *child) {
 
+  u32 pidns_inum = get_pidns_inum(child);
+  if (conf.target_pidns > 0 && conf.target_pidns != pidns_inum) {
+    return 0;
+  }
+
   struct fork_event *fork_event =
       bpf_ringbuf_reserve(&events, sizeof(struct fork_event), 0);
   if (!fork_event) {
@@ -90,6 +99,12 @@ err:
 SEC("tp_btf/sched_process_exec")
 int BPF_PROG(sched_process_exec, struct task_struct *parent, pid_t pid,
              struct linux_binprm *bprm) {
+
+  u32 pidns_inum = get_pidns_inum(parent);
+  if (conf.target_pidns > 0 && conf.target_pidns != pidns_inum) {
+    return 0;
+  }
+
   struct event *event = bpf_ringbuf_reserve(&events, sizeof(struct event), 0);
   if (!event) {
     return 0;
@@ -115,6 +130,11 @@ err:
 
 SEC("tp_btf/sched_process_exit")
 int BPF_PROG(sched_process_exit, struct task_struct *task) {
+  u32 pidns_inum = get_pidns_inum(task);
+  if (conf.target_pidns > 0 && conf.target_pidns != pidns_inum) {
+    return 0;
+  }
+
   struct event *event = bpf_ringbuf_reserve(&events, sizeof(struct event), 0);
   if (!event) {
     return 0;
@@ -143,6 +163,11 @@ int task_iter(struct bpf_iter__task *ctx) {
   // TODO(patrick.pichler): optimize this in the future.
   struct task_struct *task = ctx->task;
   if (!task) {
+    return 0;
+  }
+
+  u32 pidns_inum = get_pidns_inum(task);
+  if (conf.target_pidns > 0 && conf.target_pidns != pidns_inum) {
     return 0;
   }
 

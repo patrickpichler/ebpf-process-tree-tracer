@@ -8,6 +8,7 @@
 
 struct config {
   pid_t target_pid;
+  u32 target_pidns;
 };
 
 struct process_identity {
