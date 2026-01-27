@@ -17,17 +17,27 @@ import (
 	"github.com/cilium/ebpf"
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/collector/pdata/pprofile/pprofileotlp"
-	"go.opentelemetry.io/ebpf-profiler/host"
+	"go.opentelemetry.io/ebpf-profiler/libpf"
 	profilerlog "go.opentelemetry.io/ebpf-profiler/log"
 	"go.opentelemetry.io/ebpf-profiler/reporter"
 	"go.opentelemetry.io/ebpf-profiler/times"
 	profiler "go.opentelemetry.io/ebpf-profiler/tracer"
 	profilertracertypes "go.opentelemetry.io/ebpf-profiler/tracer/types"
 	"golang.org/x/sync/errgroup"
+	"golang.org/x/sys/unix"
 	"google.golang.org/grpc"
 	"patrickpichler.dev/process-tree-tracer/pkg/processtree"
 	"patrickpichler.dev/process-tree-tracer/pkg/tracer"
 )
+
+// ProbeBPFSyscall checks if the syscall EBPF is available on the system.
+func ProbeBPFSyscall() error {
+	_, _, errNo := unix.Syscall(unix.SYS_BPF, uintptr(unix.BPF_PROG_TYPE_UNSPEC), uintptr(0), 0)
+	if errNo == unix.ENOSYS {
+		return errors.New("eBPF syscall is not available on your system")
+	}
+	return nil
+}
 
 func newProfilesServer() *profilesServer {
 	return &profilesServer{}
@@ -306,7 +316,7 @@ func run(ctx context.Context, log *slog.Logger, targetPID int32, targetPIDNSInum
 }
 
 func startProfiler(ctx context.Context, rep reporter.Reporter, intervals *times.Times) error {
-	if err := profiler.ProbeBPFSyscall(); err != nil {
+	if err := ProbeBPFSyscall(); err != nil {
 		return fmt.Errorf("failed to probe eBPF syscall: %w", err)
 	}
 
@@ -334,7 +344,7 @@ func startProfiler(ctx context.Context, rep reporter.Reporter, intervals *times.
 	}
 
 	// Spawn monitors for the various result maps
-	traceCh := make(chan *host.Trace)
+	traceCh := make(chan *libpf.EbpfTrace)
 
 	if err := trc.StartMapMonitors(ctx, traceCh); err != nil {
 		return fmt.Errorf("failed to start map monitors: %v", err)
